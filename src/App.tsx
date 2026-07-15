@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
 import './App.css';
 
@@ -9,6 +9,69 @@ function App() {
   const [agreed, setAgreed] = useState(false);
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
+  
+  // Zoho Books Integration state
+  const [zohoInvoiceId, setZohoInvoiceId] = useState('');
+  const [isLocked, setIsLocked] = useState(false);
+
+  // Payment Verification / Callback Page state
+  const [paymentStatus, setPaymentStatus] = useState<'form' | 'verifying' | 'success' | 'error'>('form');
+  const [callbackMessage, setCallbackMessage] = useState('');
+
+  useEffect(() => {
+    // 1. Detect if we are on the payment callback redirect page
+    const params = new URLSearchParams(window.location.search);
+    const paymentId = params.get('paymentId');
+    const path = window.location.pathname;
+
+    // Check both query param and pathname to handle redirects robustly
+    if (path === '/payment-callback' || params.has('paymentId')) {
+      if (paymentId) {
+        setPaymentStatus('verifying');
+        verifyPayment(paymentId);
+      } else {
+        setPaymentStatus('error');
+        setErrorMessage('Invalid redirect. No payment session identifier found.');
+      }
+      return;
+    }
+
+    // 2. Otherwise, check for Zoho Invoice parameters to pre-populate the form
+    const zId = params.get('invoice_id');
+    const zNo = params.get('invoice_no');
+    const zAmt = params.get('amount');
+    const zName = params.get('customer_name');
+
+    if (zId) setZohoInvoiceId(zId);
+    if (zNo) setInvoiceNo(zNo);
+    if (zName) setName(zName);
+    if (zAmt) setAmount(zAmt);
+
+    // Lock the form inputs if it has been launched via an official invoice link
+    if (zId || zNo) {
+      setIsLocked(true);
+      // Auto-agree to terms since they are completing a formal invoice payment
+      setAgreed(true);
+    }
+  }, []);
+
+  const verifyPayment = async (paymentId: string) => {
+    try {
+      // Invoke the Edge Function to verify Bancstac status and update Zoho Books
+      const { data, error } = await supabase.functions.invoke('verify-payment-and-update-zoho', {
+        body: { paymentId }
+      });
+
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+
+      setPaymentStatus('success');
+      setCallbackMessage(data?.message || 'Your payment was processed successfully, and Zoho Books has been updated.');
+    } catch (err: any) {
+      setPaymentStatus('error');
+      setErrorMessage(err.message || 'An error occurred during payment verification. Please contact support.');
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -32,11 +95,17 @@ function App() {
     setLoading(true);
 
     try {
-      // 1. Log the transaction as 'pending' in Supabase Database
+      // 1. Log the transaction as 'pending' in Supabase Database, including zoho_invoice_id if it exists
       const { data: dbData, error: dbError } = await supabase
         .from('payments')
         .insert([
-          { invoice_no: invoiceNo, customer_name: name, amount: parseFloat(amount), status: 'pending' }
+          { 
+            invoice_no: invoiceNo, 
+            customer_name: name, 
+            amount: parseFloat(amount), 
+            status: 'pending',
+            zoho_invoice_id: zohoInvoiceId || null
+          }
         ])
         .select()
         .single();
@@ -69,12 +138,67 @@ function App() {
     }
   };
 
+  // Render verifying state
+  if (paymentStatus === 'verifying') {
+    return (
+      <div className="payment-container">
+        <div className="glass-card text-center">
+          <div className="brand-header animate-pulse">
+            <h2>Verifying Payment</h2>
+            <p>Confirming transaction details with Bancstac and updating Zoho Books. Please do not close or reload this page.</p>
+          </div>
+          <div className="spinner-large"></div>
+        </div>
+      </div>
+    );
+  }
+
+  // Render success state
+  if (paymentStatus === 'success') {
+    return (
+      <div className="payment-container">
+        <div className="glass-card text-center success-card">
+          <div className="success-icon">✓</div>
+          <div className="brand-header">
+            <h2 className="text-success">Payment Successful</h2>
+            <p>{callbackMessage}</p>
+          </div>
+          <button onClick={() => window.location.href = '/'} className="submit-btn">
+            Return to Checkout
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // Render error state on verification page
+  if (paymentStatus === 'error' && window.location.search.includes('paymentId')) {
+    return (
+      <div className="payment-container">
+        <div className="glass-card text-center error-card">
+          <div className="error-icon">✗</div>
+          <div className="brand-header">
+            <h2 className="text-error">Verification Failed</h2>
+            <p>{errorMessage}</p>
+          </div>
+          <button onClick={() => window.location.href = '/'} className="submit-btn btn-retry">
+            Return to Home
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="payment-container">
       <div className="glass-card">
         <div className="brand-header">
           <h2>Secure Checkout</h2>
-          <p>Provide your invoice details to complete the payment via Bancstac</p>
+          <p>
+            {isLocked 
+              ? `Review details and pay for Zoho Books Invoice ${invoiceNo}`
+              : 'Provide your invoice details to complete the payment via Bancstac'}
+          </p>
         </div>
 
         {errorMessage && <div className="error-banner">{errorMessage}</div>}
@@ -85,9 +209,9 @@ function App() {
             <input
               type="text"
               id="invoiceNo"
-              placeholder="e.g. INV-2026-001"
               value={invoiceNo}
               onChange={(e) => setInvoiceNo(e.target.value)}
+              readOnly={isLocked}
               required
             />
           </div>
@@ -100,6 +224,7 @@ function App() {
               placeholder="e.g. John Doe"
               value={name}
               onChange={(e) => setName(e.target.value)}
+              readOnly={isLocked}
               required
             />
           </div>
@@ -113,6 +238,7 @@ function App() {
               placeholder="0.00"
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
+              readOnly={isLocked}
               required
             />
           </div>
@@ -123,6 +249,7 @@ function App() {
                 type="checkbox"
                 checked={agreed}
                 onChange={(e) => setAgreed(e.target.checked)}
+                disabled={isLocked} // Auto-checked and disabled if loading from Invoice URL
               />
               <span className="checkmark"></span>
               <span className="checkbox-label">
@@ -141,3 +268,4 @@ function App() {
 }
 
 export default App;
+
