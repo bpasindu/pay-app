@@ -45,7 +45,11 @@ function App() {
     if (zId) setZohoInvoiceId(zId);
     if (zNo) setInvoiceNo(zNo);
     if (zName) setName(zName);
-    if (zAmt) setAmount(zAmt);
+    if (zAmt) {
+      // Strip any currency symbols, spaces, or commas (e.g. "LKR 1,500.00" -> "1500.00")
+      const cleanedAmount = zAmt.replace(/[^\d.]/g, '');
+      setAmount(cleanedAmount);
+    }
 
     // Lock the form inputs if it has been launched via an official invoice link
     if (zId || zNo) {
