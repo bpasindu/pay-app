@@ -98,8 +98,8 @@ serve(async (req) => {
     }
     console.log("Database status successfully updated to 'paid'.");
 
-    // 4. Update Zoho Books if zoho_invoice_id is attached to transaction
-    if (transaction.zoho_invoice_id) {
+    // 4. Update Zoho Books if zoho_invoice_id is attached to transaction (must not be empty/whitespace)
+    if (transaction.zoho_invoice_id && transaction.zoho_invoice_id.trim() !== "") {
       console.log("Zoho Invoice ID found:", transaction.zoho_invoice_id, ". Initiating Zoho Books update...");
       
       // Step A: Refresh Zoho Access Token
