@@ -20,12 +20,15 @@ serve(async (req) => {
       throw new Error("Missing paymentId parameter.");
     }
 
+    console.log("verify-payment-and-update-zoho triggered with paymentId:", paymentId);
+
     // Initialize Supabase Client with service role key to write to database
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
     // 1. Fetch transaction record from database
+    console.log("Fetching transaction details from 'payments' table...");
     const { data: transaction, error: dbError } = await supabase
       .from("payments")
       .select("*")
@@ -36,8 +39,11 @@ serve(async (req) => {
       throw new Error(`Transaction not found: ${dbError?.message || ""}`);
     }
 
+    console.log("Successfully fetched transaction from database. Current status:", transaction.status, "Invoice No:", transaction.invoice_no);
+
     // If already marked as paid, return success immediately
     if (transaction.status === "paid" && transaction.zoho_payment_recorded) {
+      console.log("Transaction already paid and updated in Zoho. Exiting function.");
       return new Response(
         JSON.stringify({ message: "Payment was already completed and updated in Zoho Books." }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -79,6 +85,7 @@ serve(async (req) => {
     }
     */
     const isSuccess = true; // MOCKED SUCCESS FOR ZOHO BOOKS INTEGRATION TESTING
+    console.log("Gateway verification bypassed (Mock mode: Success). Updating database status to paid...");
 
     // 3. Update local payment status in DB to "paid"
     const { error: updateDbError } = await supabase
@@ -89,9 +96,12 @@ serve(async (req) => {
     if (updateDbError) {
       throw new Error(`Failed to update status in local database: ${updateDbError.message}`);
     }
+    console.log("Database status successfully updated to 'paid'.");
 
     // 4. Update Zoho Books if zoho_invoice_id is attached to transaction
     if (transaction.zoho_invoice_id) {
+      console.log("Zoho Invoice ID found:", transaction.zoho_invoice_id, ". Initiating Zoho Books update...");
+      
       // Step A: Refresh Zoho Access Token
       const zohoClientId = Deno.env.get("ZOHO_CLIENT_ID");
       const zohoClientSecret = Deno.env.get("ZOHO_CLIENT_SECRET");
@@ -102,6 +112,7 @@ serve(async (req) => {
         throw new Error("Zoho configuration secrets are missing in Supabase.");
       }
 
+      console.log("Refreshing Zoho Access Token...");
       const tokenRes = await fetch("https://accounts.zoho.com/oauth/v2/token", {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -120,8 +131,10 @@ serve(async (req) => {
 
       const tokenData = await tokenRes.json();
       const accessToken = tokenData.access_token;
+      console.log("Zoho Access Token successfully refreshed.");
 
       // Step B: Get Customer ID of the Invoice from Zoho Books
+      console.log("Fetching customer details for Zoho Invoice ID:", transaction.zoho_invoice_id);
       const invoiceEndpoint = `https://www.zohoapis.com/books/v3/invoices/${transaction.zoho_invoice_id}?organization_id=${zohoOrgId}`;
       const invoiceRes = await fetch(invoiceEndpoint, {
         method: "GET",
@@ -141,8 +154,10 @@ serve(async (req) => {
       if (!customerId) {
         throw new Error("Unable to locate Zoho Customer ID for this invoice.");
       }
+      console.log("Located customer ID for this invoice:", customerId);
 
       // Step C: Record customer payment in Zoho Books
+      console.log("Recording customer payment to Zoho Books...");
       const paymentEndpoint = `https://www.zohoapis.com/books/v3/customerpayments?organization_id=${zohoOrgId}`;
       const paymentPayload = {
         customer_id: customerId,
@@ -170,12 +185,20 @@ serve(async (req) => {
         const errText = await zohoPaymentRes.text();
         throw new Error(`Failed to record payment in Zoho Books: ${errText}`);
       }
+      console.log("Customer payment successfully posted to Zoho Books.");
 
       // Step D: Update transaction logging in DB to confirm Zoho update is done
-      await supabase
+      const { error: updateDbZohoError } = await supabase
         .from("payments")
         .update({ zoho_payment_recorded: true })
         .eq("id", paymentId);
+
+      if (updateDbZohoError) {
+        throw new Error(`Failed to set zoho_payment_recorded in local database: ${updateDbZohoError.message}`);
+      }
+      console.log("Local database updated: zoho_payment_recorded = true.");
+    } else {
+      console.log("No Zoho Invoice ID found for this payment transaction. Skipping Zoho Books update.");
     }
 
     return new Response(
@@ -186,8 +209,9 @@ serve(async (req) => {
     );
 
   } catch (error: any) {
+    console.error("verify-payment-and-update-zoho failed:", error.message || error);
     return new Response(
-      JSON.stringify({ error: error.message }),
+      JSON.stringify({ error: error.message || error }),
       { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }
