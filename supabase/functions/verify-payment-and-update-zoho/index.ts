@@ -98,9 +98,12 @@ serve(async (req) => {
     }
     console.log("Database status successfully updated to 'paid'.");
 
-    // 4. Update Zoho Books if zoho_invoice_id is attached to transaction (must not be empty/whitespace)
-    if (transaction.zoho_invoice_id && transaction.zoho_invoice_id.trim() !== "") {
-      console.log("Zoho Invoice ID found:", transaction.zoho_invoice_id, ". Initiating Zoho Books update...");
+    // 4. Update Zoho Books (Search by invoice number if internal zoho_invoice_id is missing/empty)
+    const hasZohoId = transaction.zoho_invoice_id && transaction.zoho_invoice_id.trim() !== "";
+    const hasInvoiceNo = transaction.invoice_no && transaction.invoice_no.trim() !== "";
+
+    if (hasZohoId || hasInvoiceNo) {
+      console.log("Initiating Zoho Books status update...");
       
       // Step A: Refresh Zoho Access Token
       const zohoClientId = Deno.env.get("ZOHO_CLIENT_ID");
@@ -133,28 +136,67 @@ serve(async (req) => {
       const accessToken = tokenData.access_token;
       console.log("Zoho Access Token successfully refreshed.");
 
-      // Step B: Get Customer ID of the Invoice from Zoho Books
-      console.log("Fetching customer details for Zoho Invoice ID:", transaction.zoho_invoice_id);
-      const invoiceEndpoint = `https://www.zohoapis.com/books/v3/invoices/${transaction.zoho_invoice_id}?organization_id=${zohoOrgId}`;
-      const invoiceRes = await fetch(invoiceEndpoint, {
-        method: "GET",
-        headers: {
-          "Authorization": `Zoho-oauthtoken ${accessToken}`
+      let zohoInvoiceId = transaction.zoho_invoice_id;
+      let customerId = null;
+
+      // Step B: Resolve IDs by searching by Invoice Number if internal ID is blank
+      if (!zohoInvoiceId || zohoInvoiceId.trim() === "") {
+        console.log("No Zoho Invoice ID found in DB. Searching Zoho Books by Invoice Number:", transaction.invoice_no);
+        const searchEndpoint = `https://www.zohoapis.com/books/v3/invoices?organization_id=${zohoOrgId}&invoice_number=${transaction.invoice_no}`;
+        const searchRes = await fetch(searchEndpoint, {
+          method: "GET",
+          headers: {
+            "Authorization": `Zoho-oauthtoken ${accessToken}`
+          }
+        });
+
+        if (!searchRes.ok) {
+          const errText = await searchRes.text();
+          throw new Error(`Failed to search invoice in Zoho by number: ${errText}`);
         }
-      });
 
-      if (!invoiceRes.ok) {
-        const errText = await invoiceRes.text();
-        throw new Error(`Failed to retrieve invoice details from Zoho: ${errText}`);
+        const searchData = await searchRes.json();
+        const foundInvoice = searchData.invoices?.find(
+          (inv: any) => inv.invoice_number === transaction.invoice_no
+        );
+
+        if (!foundInvoice) {
+          throw new Error(`Invoice number '${transaction.invoice_no}' not found in Zoho Books.`);
+        }
+
+        zohoInvoiceId = foundInvoice.invoice_id;
+        customerId = foundInvoice.customer_id;
+        console.log("Successfully resolved internal IDs from Zoho search. Invoice ID:", zohoInvoiceId, "Customer ID:", customerId);
+
+        // Save resolved ID to local DB
+        await supabase
+          .from("payments")
+          .update({ zoho_invoice_id: zohoInvoiceId })
+          .eq("id", paymentId);
+      } else {
+        // Otherwise, fetch customer_id using the stored zoho_invoice_id
+        console.log("Fetching customer details for Zoho Invoice ID:", zohoInvoiceId);
+        const invoiceEndpoint = `https://www.zohoapis.com/books/v3/invoices/${zohoInvoiceId}?organization_id=${zohoOrgId}`;
+        const invoiceRes = await fetch(invoiceEndpoint, {
+          method: "GET",
+          headers: {
+            "Authorization": `Zoho-oauthtoken ${accessToken}`
+          }
+        });
+
+        if (!invoiceRes.ok) {
+          const errText = await invoiceRes.text();
+          throw new Error(`Failed to retrieve invoice details from Zoho: ${errText}`);
+        }
+
+        const invoiceData = await invoiceRes.json();
+        customerId = invoiceData.invoice?.customer_id;
+        console.log("Located customer ID for this invoice ID:", customerId);
       }
-
-      const invoiceData = await invoiceRes.json();
-      const customerId = invoiceData.invoice?.customer_id;
 
       if (!customerId) {
         throw new Error("Unable to locate Zoho Customer ID for this invoice.");
       }
-      console.log("Located customer ID for this invoice:", customerId);
 
       // Step C: Record customer payment in Zoho Books
       console.log("Recording customer payment to Zoho Books...");
@@ -166,7 +208,7 @@ serve(async (req) => {
         date: new Date().toISOString().split('T')[0],
         invoices: [
           {
-            invoice_id: transaction.zoho_invoice_id,
+            invoice_id: zohoInvoiceId,
             amount_applied: transaction.amount
           }
         ]
@@ -198,7 +240,7 @@ serve(async (req) => {
       }
       console.log("Local database updated: zoho_payment_recorded = true.");
     } else {
-      console.log("No Zoho Invoice ID found for this payment transaction. Skipping Zoho Books update.");
+      console.log("No Zoho Invoice ID or Invoice Number found for this payment transaction. Skipping Zoho Books update.");
     }
 
     return new Response(
