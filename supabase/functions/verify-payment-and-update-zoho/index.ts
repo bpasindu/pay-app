@@ -44,7 +44,8 @@ serve(async (req) => {
       );
     }
 
-    // 2. Contact Bancstac Gateway to verify order status
+    // 2. Contact Bancstac Gateway to verify order status (TEMPORARILY MOCKED FOR TESTING ZOHO BOOKS FLOW)
+    /*
     const merchantId = Deno.env.get("BANCSTAC_MERCHANT_ID");
     const apiPassword = Deno.env.get("BANCSTAC_API_PASSWORD");
     const gatewayUrl = Deno.env.get("BANCSTAC_GATEWAY_URL");
@@ -76,6 +77,8 @@ serve(async (req) => {
     if (!isSuccess) {
       throw new Error(`Gateway returned payment status: ${orderData.status}`);
     }
+    */
+    const isSuccess = true; // MOCKED SUCCESS FOR ZOHO BOOKS INTEGRATION TESTING
 
     // 3. Update local payment status in DB to "paid"
     const { error: updateDbError } = await supabase
@@ -189,3 +192,4 @@ serve(async (req) => {
     );
   }
 });
+

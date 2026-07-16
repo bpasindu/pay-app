@@ -16,7 +16,8 @@ serve(async (req) => {
   try {
     const { paymentId, invoiceNo, name, amount } = await req.json();
 
-    // 1. Configure gateway credentials from environment variables
+    // 1. Configure gateway credentials (TEMPORARILY MOCKED FOR TESTING ZOHO BOOKS FLOW)
+    /*
     const merchantId = Deno.env.get("BANCSTAC_MERCHANT_ID");
     const apiPassword = Deno.env.get("BANCSTAC_API_PASSWORD");
     const gatewayUrl = Deno.env.get("BANCSTAC_GATEWAY_URL"); // Provided by bank e.g. https://test-gateway.bancstac.com/api/rest/version/72
@@ -62,11 +63,11 @@ serve(async (req) => {
     }
 
     const gatewaySessionData = await response.json();
-
-    // Bancstac/MPGS returns session.id. Hosted pages are initialized using:
-    // https://<bank-gateway-domain>/checkout/pay/<sessionId>
-    // Adjust target URL base matching your acquiring bank's hosted payment portal
     const redirectUrl = `${Deno.env.get("BANCSTAC_CHECKOUT_BASE_URL")}/checkout/pay/${gatewaySessionData.session.id}`;
+    */
+
+    // Redirect directly to payment callback page (simulating bank approval)
+    const redirectUrl = `${req.headers.get("origin")}/payment-callback?paymentId=${paymentId}`;
 
     return new Response(
       JSON.stringify({ redirectUrl }),
