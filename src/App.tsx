@@ -43,18 +43,41 @@ function App() {
 
     if (dataParam) {
       try {
-        // Try decoding URI component first (in case it has URL-encoded characters or is URL-encoded JSON)
-        parsedData = JSON.parse(decodeURIComponent(dataParam));
+        const decoded = decodeURIComponent(dataParam);
+        try {
+          parsedData = JSON.parse(decoded);
+        } catch (e) {
+          // Fallback to normalizing single-quoted JSON
+          const normalized = decoded
+            .replace(/\{\s*'/g, '{"')
+            .replace(/'\s*\}/g, '"}')
+            .replace(/'\s*:/g, '":')
+            .replace(/:\s*'/g, ':"')
+            .replace(/'\s*,/g, '",')
+            .replace(/,\s*'/g, ',"');
+          parsedData = JSON.parse(normalized);
+        }
       } catch (e) {
         try {
-          // Try parsing directly (in case it is raw JSON and has malformed URI sequences like raw %)
           parsedData = JSON.parse(dataParam);
         } catch (e2) {
           try {
-            // Try base64 decoding (in case it is Base64 encoded JSON)
-            parsedData = JSON.parse(atob(dataParam));
+            // Normalizing raw single-quoted JSON
+            const normalized = dataParam
+              .replace(/\{\s*'/g, '{"')
+              .replace(/'\s*\}/g, '"}')
+              .replace(/'\s*:/g, '":')
+              .replace(/:\s*'/g, ':"')
+              .replace(/'\s*,/g, '",')
+              .replace(/,\s*'/g, ',"');
+            parsedData = JSON.parse(normalized);
           } catch (e3) {
-            console.error('Failed to parse JSON data parameter:', e3);
+            try {
+              // Try base64 decoding (in case it is Base64 encoded JSON)
+              parsedData = JSON.parse(atob(dataParam));
+            } catch (e4) {
+              console.error('Failed to parse JSON data parameter:', e4);
+            }
           }
         }
       }
