@@ -38,10 +38,39 @@ function App() {
     }
 
     // 2. Otherwise, check for Zoho Invoice parameters to pre-populate the form
-    const zId = params.get('invoice_id');
-    const zNo = params.get('invoice_no');
-    const zAmt = params.get('amount');
-    const zName = params.get('customer_name');
+    const dataParam = params.get('data');
+    let parsedData: any = null;
+
+    if (dataParam) {
+      try {
+        // Try parsing directly (in case it is raw JSON)
+        parsedData = JSON.parse(dataParam);
+      } catch (e) {
+        try {
+          // Try decoding URI component (in case it is URL-encoded JSON)
+          parsedData = JSON.parse(decodeURIComponent(dataParam));
+        } catch (e2) {
+          try {
+            // Try base64 decoding (in case it is Base64 encoded JSON)
+            parsedData = JSON.parse(atob(dataParam));
+          } catch (e3) {
+            console.error('Failed to parse JSON data parameter:', e3);
+          }
+        }
+      }
+    }
+
+    const getVal = (key: string, jsonVal: any) => {
+      if (jsonVal !== undefined && jsonVal !== null) {
+        return String(jsonVal);
+      }
+      return params.get(key);
+    };
+
+    const zId = getVal('invoice_id', parsedData?.invoice_id);
+    const zNo = getVal('invoice_no', parsedData?.invoice_no);
+    const zAmt = getVal('amount', parsedData?.amount);
+    const zName = getVal('customer_name', parsedData?.customer_name);
 
     if (zId) setZohoInvoiceId(zId);
     if (zNo) setInvoiceNo(zNo);
