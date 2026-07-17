@@ -43,12 +43,12 @@ function App() {
 
     if (dataParam) {
       try {
-        // Try parsing directly (in case it is raw JSON)
-        parsedData = JSON.parse(dataParam);
+        // Try decoding URI component first (in case it has URL-encoded characters or is URL-encoded JSON)
+        parsedData = JSON.parse(decodeURIComponent(dataParam));
       } catch (e) {
         try {
-          // Try decoding URI component (in case it is URL-encoded JSON)
-          parsedData = JSON.parse(decodeURIComponent(dataParam));
+          // Try parsing directly (in case it is raw JSON and has malformed URI sequences like raw %)
+          parsedData = JSON.parse(dataParam);
         } catch (e2) {
           try {
             // Try base64 decoding (in case it is Base64 encoded JSON)
