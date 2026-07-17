@@ -1,6 +1,6 @@
 // supabase/functions/create-payment-session/index.ts
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import Stripe from "https://esm.sh/stripe@14.22.0?target=deno";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -16,68 +16,64 @@ serve(async (req) => {
   try {
     const { paymentId, invoiceNo, name, amount } = await req.json();
 
-    // 1. Configure gateway credentials (TEMPORARILY MOCKED FOR TESTING ZOHO BOOKS FLOW)
-    /*
-    const merchantId = Deno.env.get("BANCSTAC_MERCHANT_ID");
-    const apiPassword = Deno.env.get("BANCSTAC_API_PASSWORD");
-    const gatewayUrl = Deno.env.get("BANCSTAC_GATEWAY_URL"); // Provided by bank e.g. https://test-gateway.bancstac.com/api/rest/version/72
-
-    if (!merchantId || !apiPassword || !gatewayUrl) {
-      throw new Error("Missing payment gateway environment variables.");
+    if (!paymentId || !invoiceNo || !amount) {
+      throw new Error("Missing required parameters: paymentId, invoiceNo, or amount.");
     }
 
-    // 2. Build session payload for Bancstac / MPGS API
-    const sessionPayload = {
-      apiOperation: "CREATE_CHECKOUT_SESSION",
-      interaction: {
-        operation: "PURCHASE",
-        returnUrl: `${req.headers.get("origin")}/payment-callback?paymentId=${paymentId}`,
-        merchant: {
-          name: "Your Company Ltd"
-        }
-      },
-      order: {
-        id: invoiceNo,
-        amount: amount.toFixed(2),
-        currency: "LKR", // Set target currency (e.g. LKR)
-        description: `Invoice ${invoiceNo}`
-      }
-    };
+    const stripeSecretKey = Deno.env.get("STRIPE_SECRET_KEY");
+    if (!stripeSecretKey) {
+      throw new Error("Stripe secret key is not configured in Supabase (STRIPE_SECRET_KEY).");
+    }
 
-    // 3. Send request to Bancstac / MPGS Gateway
-    const endpoint = `${gatewayUrl}/merchant/${merchantId}/session`;
-    const credentials = btoa(`merchant.${merchantId}:${apiPassword}`); // Basic Authentication Header
-
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Basic ${credentials}`
-      },
-      body: JSON.stringify(sessionPayload)
+    // Initialize Stripe with Deno's fetch-based HTTP client
+    const stripe = new Stripe(stripeSecretKey, {
+      httpClient: Stripe.createFetchHttpClient(),
     });
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Gateway Error: ${errorText}`);
+    console.log(`Creating Stripe checkout session for Invoice: ${invoiceNo}, Amount: ${amount}`);
+
+    // Create Stripe Checkout Session
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ['card'],
+      line_items: [
+        {
+          price_data: {
+            currency: 'lkr',
+            product_data: {
+              name: `Invoice ${invoiceNo}`,
+              description: `Billing Name: ${name}`,
+            },
+            unit_amount: Math.round(amount * 100), // Stripe expects amount in cents
+          },
+          quantity: 1,
+        },
+      ],
+      mode: 'payment',
+      success_url: `${req.headers.get("origin")}/payment-callback?paymentId=${paymentId}&session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${req.headers.get("origin")}/`,
+      metadata: {
+        paymentId,
+        invoiceNo,
+      },
+    });
+
+    if (!session.url) {
+      throw new Error("Stripe did not return a checkout redirect URL.");
     }
 
-    const gatewaySessionData = await response.json();
-    const redirectUrl = `${Deno.env.get("BANCSTAC_CHECKOUT_BASE_URL")}/checkout/pay/${gatewaySessionData.session.id}`;
-    */
-
-    // Redirect directly to payment callback page (simulating bank approval)
-    const redirectUrl = `${req.headers.get("origin")}/payment-callback?paymentId=${paymentId}`;
+    console.log(`Stripe session created successfully. Redirecting to: ${session.url}`);
 
     return new Response(
-      JSON.stringify({ redirectUrl }),
+      JSON.stringify({ redirectUrl: session.url }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
 
   } catch (error: any) {
+    console.error("create-payment-session failed:", error.message || error);
     return new Response(
-      JSON.stringify({ error: error.message }),
+      JSON.stringify({ error: error.message || error }),
       { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }
 });
+

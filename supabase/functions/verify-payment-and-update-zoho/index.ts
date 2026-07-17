@@ -1,6 +1,7 @@
 // supabase/functions/verify-payment-and-update-zoho/index.ts
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import Stripe from "https://esm.sh/stripe@14.22.0?target=deno";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -14,7 +15,7 @@ serve(async (req) => {
   }
 
   try {
-    const { paymentId } = await req.json();
+    const { paymentId, sessionId } = await req.json();
 
     if (!paymentId) {
       throw new Error("Missing paymentId parameter.");
@@ -50,42 +51,34 @@ serve(async (req) => {
       );
     }
 
-    // 2. Contact Bancstac Gateway to verify order status (TEMPORARILY MOCKED FOR TESTING ZOHO BOOKS FLOW)
-    /*
-    const merchantId = Deno.env.get("BANCSTAC_MERCHANT_ID");
-    const apiPassword = Deno.env.get("BANCSTAC_API_PASSWORD");
-    const gatewayUrl = Deno.env.get("BANCSTAC_GATEWAY_URL");
-
-    if (!merchantId || !apiPassword || !gatewayUrl) {
-      throw new Error("Payment gateway secrets are not configured in Supabase.");
-    }
-
-    const bancstacEndpoint = `${gatewayUrl}/merchant/${merchantId}/order/${transaction.invoice_no}`;
-    const credentials = btoa(`merchant.${merchantId}:${apiPassword}`);
-
-    const bancstacRes = await fetch(bancstacEndpoint, {
-      method: "GET",
-      headers: {
-        "Authorization": `Basic ${credentials}`
+    // 2. Contact Stripe Gateway to verify session status
+    let isSuccess = false;
+    if (sessionId) {
+      console.log(`Verifying payment status with Stripe for session: ${sessionId}`);
+      const stripeSecretKey = Deno.env.get("STRIPE_SECRET_KEY");
+      if (!stripeSecretKey) {
+        throw new Error("Stripe secret key is not configured in Supabase (STRIPE_SECRET_KEY).");
       }
-    });
-
-    if (!bancstacRes.ok) {
-      const errText = await bancstacRes.text();
-      throw new Error(`Failed to query gateway status: ${errText}`);
+      const stripe = new Stripe(stripeSecretKey, {
+        httpClient: Stripe.createFetchHttpClient(),
+      });
+      const session = await stripe.checkout.sessions.retrieve(sessionId);
+      if (session.payment_status === "paid") {
+        if (session.metadata?.paymentId === paymentId) {
+          isSuccess = true;
+          console.log(`Stripe payment successfully verified for paymentId: ${paymentId}`);
+        } else {
+          throw new Error("Stripe checkout session metadata does not match the payment ID.");
+        }
+      } else {
+        throw new Error(`Stripe session payment status is: ${session.payment_status}`);
+      }
+    } else {
+      throw new Error("Stripe session ID (sessionId) is missing in verification request.");
     }
 
-    const orderData = await bancstacRes.json();
-    
-    // Check if the transaction state indicates success (e.g. status is CAPTURED or APPROVED)
-    const isSuccess = orderData.status === "CAPTURED" || orderData.status === "APPROVED" || orderData.status === "SUCCESS";
-    
-    if (!isSuccess) {
-      throw new Error(`Gateway returned payment status: ${orderData.status}`);
-    }
-    */
-    const isSuccess = true; // MOCKED SUCCESS FOR ZOHO BOOKS INTEGRATION TESTING
-    console.log("Gateway verification bypassed (Mock mode: Success). Updating database status to paid...");
+    console.log("Stripe verification successful. Updating database status to paid...");
+
 
     // 3. Update local payment status in DB to "paid"
     const { error: updateDbError } = await supabase

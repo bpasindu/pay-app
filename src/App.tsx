@@ -22,13 +22,14 @@ function App() {
     // 1. Detect if we are on the payment callback redirect page
     const params = new URLSearchParams(window.location.search);
     const paymentId = params.get('paymentId');
+    const sessionId = params.get('session_id');
     const path = window.location.pathname;
 
     // Check both query param and pathname to handle redirects robustly
     if (path === '/payment-callback' || params.has('paymentId')) {
       if (paymentId) {
         setPaymentStatus('verifying');
-        verifyPayment(paymentId);
+        verifyPayment(paymentId, sessionId || undefined);
       } else {
         setPaymentStatus('error');
         setErrorMessage('Invalid redirect. No payment session identifier found.');
@@ -59,11 +60,11 @@ function App() {
     }
   }, []);
 
-  const verifyPayment = async (paymentId: string) => {
+  const verifyPayment = async (paymentId: string, sessionId?: string) => {
     try {
-      // Invoke the Edge Function to verify Bancstac status and update Zoho Books
+      // Invoke the Edge Function to verify payment status and update Zoho Books
       const { data, error } = await supabase.functions.invoke('verify-payment-and-update-zoho', {
-        body: { paymentId }
+        body: { paymentId, sessionId }
       });
 
       if (error) throw error;
@@ -149,7 +150,7 @@ function App() {
         <div className="glass-card text-center">
           <div className="brand-header animate-pulse">
             <h2>Verifying Payment</h2>
-            <p>Confirming transaction details with Bancstac and updating Zoho Books. Please do not close or reload this page.</p>
+            <p>Confirming transaction details with Stripe and updating Zoho Books. Please do not close or reload this page.</p>
           </div>
           <div className="spinner-large"></div>
         </div>
@@ -201,7 +202,7 @@ function App() {
           <p>
             {isLocked 
               ? `Review details and pay for Zoho Books Invoice ${invoiceNo}`
-              : 'Provide your invoice details to complete the payment via Bancstac'}
+              : 'Provide your invoice details to complete the payment'}
           </p>
         </div>
 
@@ -253,7 +254,7 @@ function App() {
                 type="checkbox"
                 checked={agreed}
                 onChange={(e) => setAgreed(e.target.checked)}
-                disabled={isLocked} // Auto-checked and disabled if loading from Invoice URL
+                // disabled={isLocked} // Auto-checked and disabled if loading from Invoice URL
               />
               <span className="checkmark"></span>
               <span className="checkbox-label">
