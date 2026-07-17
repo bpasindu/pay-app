@@ -9,7 +9,7 @@ function App() {
   const [agreed, setAgreed] = useState(false);
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
-  
+
   // Zoho Books Integration state
   const [zohoInvoiceId, setZohoInvoiceId] = useState('');
   const [isLocked, setIsLocked] = useState(false);
@@ -43,40 +43,47 @@ function App() {
 
     if (dataParam) {
       try {
-        const decoded = decodeURIComponent(dataParam);
+        // Try normalizing and parsing (resolving tildes, pipes, or structural single quotes to double quotes)
+        const normalized = dataParam
+          .replace(/~/g, '"')
+          .replace(/\|/g, '"')
+          .replace(/\{\s*'/g, '{"')
+          .replace(/'\s*\}/g, '"}')
+          .replace(/'\s*:/g, '":')
+          .replace(/:\s*'/g, ':"')
+          .replace(/'\s*,/g, '",')
+          .replace(/,\s*'/g, ',"');
+        
+        parsedData = JSON.parse(normalized);
+      } catch (e) {
         try {
-          parsedData = JSON.parse(decoded);
-        } catch (e) {
-          // Fallback to normalizing single-quoted JSON
-          const normalized = decoded
+          const decoded = decodeURIComponent(dataParam);
+          const decodedNormalized = decoded
+            .replace(/~/g, '"')
+            .replace(/\|/g, '"')
             .replace(/\{\s*'/g, '{"')
             .replace(/'\s*\}/g, '"}')
             .replace(/'\s*:/g, '":')
             .replace(/:\s*'/g, ':"')
             .replace(/'\s*,/g, '",')
             .replace(/,\s*'/g, ',"');
-          parsedData = JSON.parse(normalized);
-        }
-      } catch (e) {
-        try {
-          parsedData = JSON.parse(dataParam);
+          
+          parsedData = JSON.parse(decodedNormalized);
         } catch (e2) {
           try {
-            // Normalizing raw single-quoted JSON
-            const normalized = dataParam
-              .replace(/\{\s*'/g, '{"')
-              .replace(/'\s*\}/g, '"}')
-              .replace(/'\s*:/g, '":')
-              .replace(/:\s*'/g, ':"')
-              .replace(/'\s*,/g, '",')
-              .replace(/,\s*'/g, ',"');
-            parsedData = JSON.parse(normalized);
+            // Direct JSON parse fallback
+            parsedData = JSON.parse(dataParam);
           } catch (e3) {
             try {
-              // Try base64 decoding (in case it is Base64 encoded JSON)
-              parsedData = JSON.parse(atob(dataParam));
+              // Direct decoded JSON parse fallback
+              parsedData = JSON.parse(decodeURIComponent(dataParam));
             } catch (e4) {
-              console.error('Failed to parse JSON data parameter:', e4);
+              try {
+                // Base64 decode fallback
+                parsedData = JSON.parse(atob(dataParam));
+              } catch (e5) {
+                console.error('Failed to parse JSON data parameter:', e5);
+              }
             }
           }
         }
@@ -156,10 +163,10 @@ function App() {
       const { data: dbData, error: dbError } = await supabase
         .from('payments')
         .insert([
-          { 
-            invoice_no: invoiceNo, 
-            customer_name: name, 
-            amount: parseFloat(amount), 
+          {
+            invoice_no: invoiceNo,
+            customer_name: name,
+            amount: parseFloat(amount),
             status: 'pending',
             zoho_invoice_id: zohoInvoiceId || null
           }
@@ -252,7 +259,7 @@ function App() {
         <div className="brand-header">
           <h2>Secure Checkout</h2>
           <p>
-            {isLocked 
+            {isLocked
               ? `Review details and pay for Zoho Books Invoice ${invoiceNo}`
               : 'Provide your invoice details to complete the payment'}
           </p>
@@ -306,7 +313,7 @@ function App() {
                 type="checkbox"
                 checked={agreed}
                 onChange={(e) => setAgreed(e.target.checked)}
-                // disabled={isLocked} // Auto-checked and disabled if loading from Invoice URL
+              // disabled={isLocked} // Auto-checked and disabled if loading from Invoice URL
               />
               <span className="checkmark"></span>
               <span className="checkbox-label">
